@@ -109,7 +109,7 @@ int main(void) {
             (playerBottom > botPipeTop); // Player bottom is below pipe top
 
         bool hit_floor = (playerBottom >= h);
-        bool hit_ciling = (playerBottom <= h);
+        bool hit_ciling = (playerBottom <= 0);
 
         if (hit_top || hit_bottom || hit_floor || hit_ciling) {
           std::cout << "game over!\n";
