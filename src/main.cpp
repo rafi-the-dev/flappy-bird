@@ -3,11 +3,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#pragma region imgui
-#include "imgui.h"
-#include "imguiThemes.h"
-#include "rlImGui.h"
-#pragma endregion
+
 struct Pipe {
   float x = 0;
   float pipe_height = 0;
@@ -15,22 +11,28 @@ struct Pipe {
 };
 std::vector<Pipe> pipes = {};
 
+Texture2D player_tex;
+Rectangle player_sourceRec;
+bool texture_loaded = false;
+
 struct Player {
-  Rectangle position = {50, 0, 100, 100};
+  Rectangle position = {50, 225, 64, 64};
   Vector2 origin = {position.width / 2, position.height / 2};
   float rotation = 0;
 };
-float player_jump_height = 500.0;
-float gravity = 1000.0;
-float velY = 0.0;
-float pipe_speed = 350.0;
-float spawnTimer = 0;
-float spawnInterval = 3.0; // seconds between pipes
-float gap = 250.0;
+
+float player_jump_height = 500.0f;
+float gravity = 1000.0f;
+float velY = 0.0f;
+float pipe_speed = 350.0f;
+float spawnTimer = 0.0f;
+float spawnInterval = 3.0f;
+float gap = 250.0f;
 Player player;
+
 enum class Game_state { menu, playing, game_over };
 struct Game {
-  Game_state game_state = Game_state::playing;
+  Game_state game_state = Game_state::menu;
   int score = 0;
 };
 
@@ -38,81 +40,95 @@ Game game;
 
 int main(void) {
   SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-  InitWindow(800, 450, "raylib [core] example - basic window");
-#pragma region imgui
-  rlImGuiSetup(true);
-  // you can use whatever imgui theme you like!
-  // ImGui::StyleColorsDark();
-  // imguiThemes::yellow();
-  // imguiThemes::gray();
-  imguiThemes::green();
-  // imguiThemes::red();
-  // imguiThemes::embraceTheDarkness();
-  ImGuiIO &io = ImGui::GetIO();
-  (void)io;
-  io.ConfigFlags |=
-      ImGuiConfigFlags_NavEnableKeyboard;           // Enable Keyboard Controls
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
-  io.FontGlobalScale = 2;
-  ImGuiStyle &style = ImGui::GetStyle();
-  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-    // style.WindowRounding = 0.0f;
-    style.Colors[ImGuiCol_WindowBg].w = 0.5f;
-    // style.Colors[ImGuiCol_DockingEmptyBg].w = 0.f;
+  InitWindow(800, 450, "Raylib - Flappy Bird");
+  SetTargetFPS(60);
+
+  player_tex = LoadTexture("resources/bird.png");
+
+  if (player_tex.width > 0 && player_tex.height > 0) {
+    SetTextureFilter(player_tex, TEXTURE_FILTER_POINT);
+    player_sourceRec = {0.0f, 0.0f, (float)player_tex.width,
+                        (float)player_tex.height};
+    texture_loaded = true;
+
+    float targetWidth = 64.0f;
+    float scale = targetWidth / (float)player_tex.width;
+
+    player.position.width = (float)player_tex.width * scale;
+    player.position.height = (float)player_tex.height * scale;
+    player.origin = {player.position.width / 2.0f,
+                     player.position.height / 2.0f};
+  } else {
+    player_sourceRec = {0.0f, 0.0f, 64.0f, 64.0f};
+    texture_loaded = false;
   }
-#pragma endregion
+
   while (!WindowShouldClose()) {
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
     float delta = GetFrameTime();
     int w = GetScreenWidth();
     int h = GetScreenHeight();
-#pragma region imgui
-    rlImGuiBegin();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, {});
-    ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, {});
-    ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
-    ImGui::PopStyleColor(2);
-#pragma endregion
-    ImGui::Begin("player");
-    ImGui::SliderFloat("gravity", &gravity, 1.0, 2000.0);
-    ImGui::SliderFloat("jump height", &player_jump_height, 1.0, 2000.0);
-    ImGui::End();
-    DrawRectanglePro(player.position, player.origin, player.rotation, GREEN);
 
-    for (Pipe &pipe : pipes) {
-      if (game.game_state == Game_state::playing) {
+    // --- Logic & State Engine ---
+    if (game.game_state == Game_state::menu) {
+      if (IsKeyPressed(KEY_SPACE)) {
+        velY = -player_jump_height;
+        game.game_state = Game_state::playing;
+      }
+    } else if (game.game_state == Game_state::playing) {
+      for (auto &pipe : pipes) {
         pipe.x -= pipe_speed * delta;
       }
 
+      spawnTimer += delta;
+      if (spawnTimer >= spawnInterval) {
+        spawnTimer = 0.0f;
+        float randomHeight = (float)GetRandomValue(50, h - 250);
+        pipes.push_back({(float)w, randomHeight, false});
+      }
+
+      if (IsKeyPressed(KEY_SPACE)) {
+        velY = -player_jump_height;
+      }
+    } else if (game.game_state == Game_state::game_over) {
+      if (IsKeyPressed(KEY_R)) {
+        pipes.clear();
+        player.position.y = h / 2.0f;
+        velY = 0.0f;
+        game.score = 0;
+        spawnTimer = 0.0f;
+        game.game_state = Game_state::menu;
+      }
+    }
+
+    if (game.game_state == Game_state::playing ||
+        game.game_state == Game_state::game_over) {
+      velY += gravity * delta;
+      player.position.y += velY * delta;
+      player.rotation = std::clamp(velY / 12.0f, -30.0f, 70.0f);
+    }
+
+    // --- Collisions ---
+    float playerLeft = player.position.x - player.origin.x;
+    float playerRight = player.position.x + player.origin.x;
+    float playerTop = player.position.y - player.origin.y;
+    float playerBottom = player.position.y + player.origin.y;
+
+    for (Pipe &pipe : pipes) {
       float pipeLeft = pipe.x;
       float pipeRight = pipe.x + 100.0f;
       float topPipeBot = pipe.pipe_height;
       float botPipeTop = pipe.pipe_height + gap;
 
-      DrawRectangle(pipe.x, 0, 100, pipe.pipe_height, GREEN);
-      DrawRectangle(pipe.x, botPipeTop, 100, h - botPipeTop, GREEN);
-
       if (game.game_state == Game_state::playing) {
-
-        float playerLeft = player.position.x - player.origin.x;
-        float playerRight = player.position.x + player.origin.x;
-        float playerTop = player.position.y - player.origin.y;
-        float playerBottom = player.position.y + player.origin.y;
-
-        bool hit_top =
-            (playerRight > pipeLeft) && (playerLeft < pipeRight) &&
-            (playerTop < topPipeBot); // Player top is above pipe bottom
-
-        bool hit_bottom =
-            (playerRight > pipeLeft) && (playerLeft < pipeRight) &&
-            (playerBottom > botPipeTop); // Player bottom is below pipe top
-
+        bool hit_top = (playerRight > pipeLeft) && (playerLeft < pipeRight) &&
+                       (playerTop < topPipeBot);
+        bool hit_bottom = (playerRight > pipeLeft) &&
+                          (playerLeft < pipeRight) &&
+                          (playerBottom > botPipeTop);
         bool hit_floor = (playerBottom >= h);
-        bool hit_ciling = (playerBottom <= 0);
+        bool hit_ceiling = (playerTop <= 0);
 
-        if (hit_top || hit_bottom || hit_floor || hit_ciling) {
-          std::cout << "game over!\n";
+        if (hit_top || hit_bottom || hit_floor || hit_ceiling) {
           game.game_state = Game_state::game_over;
         }
 
@@ -123,46 +139,45 @@ int main(void) {
       }
     }
 
-    std::string score_text = "score: " + std::to_string((game.score));
+    if (game.game_state == Game_state::playing) {
+      pipes.erase(std::remove_if(pipes.begin(), pipes.end(),
+                                 [](const Pipe &p) { return p.x + 100 < 0; }),
+                  pipes.end());
+    }
+
+    // --- Render System ---
+    BeginDrawing();
+    ClearBackground(RAYWHITE);
+
+    for (const auto &pipe : pipes) {
+      float botPipeTop = pipe.pipe_height + gap;
+      DrawRectangle((int)pipe.x, 0, 100, (int)pipe.pipe_height, GREEN);
+      DrawRectangle((int)pipe.x, (int)botPipeTop, 100, h - (int)botPipeTop,
+                    GREEN);
+    }
+
+    if (texture_loaded) {
+      DrawTexturePro(player_tex, player_sourceRec, player.position,
+                     player.origin, player.rotation, WHITE);
+    } else {
+      DrawRectanglePro(player.position, player.origin, player.rotation, BLUE);
+    }
+
+    std::string score_text = "score: " + std::to_string(game.score);
     DrawText(score_text.c_str(), w / 3, h / 8, 80, BLACK);
 
-    if (game.game_state == Game_state::game_over) {
+    if (game.game_state == Game_state::menu) {
+      DrawText("PRESS SPACE TO START", w / 4, h / 2, 24, DARKGRAY);
+    } else if (game.game_state == Game_state::game_over) {
       DrawText("game_over", w / 3, h / 2, 50, BLACK);
+      DrawText("press R to play again", w / 3, h / 2 + 100, 25, BLACK);
     }
-    // remove pipes that scrolled off the left edge
-    pipes.erase(std::remove_if(pipes.begin(), pipes.end(),
-                               [](const Pipe &p) { return p.x + 100 < 0; }),
-                pipes.end());
-    spawnTimer += delta;
-    if (spawnTimer >= spawnInterval) {
-      spawnTimer = 0;
-      float randomHeight = GetRandomValue(50, h - 250); // leave room for gap
-      pipes.push_back({(float)w, randomHeight});        // spawn at right edge
-    }
-    if (game.game_state == Game_state::playing) {
 
-      if (IsKeyPressed(KEY_SPACE)) {
-        velY = -player_jump_height; // set velocity, negative = up
-      }
-    }
-    if (game.game_state == Game_state::game_over ||
-        game.game_state == Game_state::playing) {
-      velY += gravity * delta; // gravity, every frame
-      player.position.y += velY * delta;
-      player.rotation = std::clamp(velY / 12.f, -30.0f, 70.0f);
-    }
-#pragma region imgui
-    rlImGuiEnd();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-      ImGui::UpdatePlatformWindows();
-      ImGui::RenderPlatformWindowsDefault();
-    }
-#pragma endregion
     EndDrawing();
   }
-#pragma region imgui
-  rlImGuiShutdown();
-#pragma endregion
+
+  if (texture_loaded)
+    UnloadTexture(player_tex);
   CloseWindow();
   return 0;
 }
